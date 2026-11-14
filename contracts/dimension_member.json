@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "table": "dim_member",
+  "natural_key": "member_id",
+  "tracked_attributes": [
+    "segment",
+    "region",
+    "status"
+  ],
+  "attribute_types": {
+    "segment": "string",
+    "region": "string",
+    "status": "string"
+  },
+  "effective_at_field": "effective_at",
+  "event_id_field": "event_id",
+  "sequence_field": "sequence",
+  "payload_field": "payload",
+  "same_time_policy": "sequence_then_event_id_then_line",
+  "time_format": "iso8601_utc_seconds",
+  "delete_semantics": "status_only"
+}

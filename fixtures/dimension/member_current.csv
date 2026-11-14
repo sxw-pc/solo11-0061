@@ -1,0 +1,8 @@
+member_id,segment,region,status,updated_at
+M-1001,Silver,EMEA,Inactive,2024-08-01T00:00:00Z
+M-1002,Gold,EMEA,Active,2024-03-01T00:00:00Z
+M-1003,Silver,APAC,Active,2024-07-01T00:00:00Z
+M-1004,Bronze,APAC,Active,2024-01-01T00:00:00Z
+M-1004,Silver,APAC,Active,2024-05-01T00:00:00Z
+M-1007,Bronze,APAC,Active,2024-02-01T00:00:00Z
+M-1008,Silver,APAC,Active,2024-07-01T00:00:00Z

@@ -1,0 +1,65 @@
+{
+  "actual_members": 7,
+  "actual_versions": 20,
+  "applied_events": 19,
+  "asof_by_status": {
+    "attribute_drift": 2,
+    "match": 19,
+    "missing_actual": 6,
+    "multiple_actual": 4,
+    "orphan_actual": 2
+  },
+  "asof_checks": 33,
+  "asof_mismatches": 14,
+  "current_snapshot_rows": 7,
+  "duplicate_conflict": 1,
+  "duplicate_exact": 1,
+  "event_rows": 23,
+  "expected_members": 7,
+  "expected_versions": 19,
+  "findings_by_code": {
+    "DIM_ATTR_DRIFT": 1,
+    "DIM_DUPLICATE_VERSION": 1,
+    "DIM_GAP": 1,
+    "DIM_MISSING_EXPECTED": 1,
+    "DIM_MULTI_CURRENT": 1,
+    "DIM_NO_CURRENT": 1,
+    "DIM_ORPHAN_ACTUAL": 1,
+    "DIM_OVERLAP": 3,
+    "EVT_DUP_CONFLICT": 1,
+    "EVT_SAME_TIME_CONFLICT": 1
+  },
+  "findings_by_severity": {
+    "high": 6,
+    "medium": 6
+  },
+  "findings_total": 12,
+  "missing_expected_members": 1,
+  "now": "2026-01-15T00:00:00Z",
+  "noop_events": 1,
+  "orphan_actual_members": 1,
+  "plan_actions": 12,
+  "plan_by_kind": {
+    "BACKFILL_GAP": 1,
+    "CLOSE_EXTRA_CURRENT": 1,
+    "CREATE_CURRENT_VERSION": 1,
+    "CREATE_MISSING_VERSIONS": 1,
+    "MERGE_DUPLICATE_VERSION": 1,
+    "RESOLVE_OVERLAP": 3,
+    "RETIRE_ORPHAN": 1,
+    "REVIEW_EVENT_CONFLICT": 1,
+    "REVIEW_EVENT_ORDER": 1,
+    "REWRITE_VERSION_ATTRIBUTES": 1
+  },
+  "plan_by_risk": {
+    "high": 6,
+    "low": 2,
+    "medium": 4
+  },
+  "plan_review_required": 12,
+  "same_time_conflict_groups": 1,
+  "status": "CALIBRATED",
+  "superseded_same_time": 1,
+  "table": "dim_member",
+  "unique_event_ids": 21
+}

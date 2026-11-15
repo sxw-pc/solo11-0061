@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from .config import Contract
+from .hierarchy import diagnose_temporal_hierarchy
 from .model import ActualVersion, CurrentRow, ExpectedVersion, Finding
 from .structural import (
     diagnose_current_state,
@@ -71,6 +72,16 @@ def diagnose_actual(
             )
         findings.extend(_diagnose_attribute_drift(contract, key, expected_rows, rows))
     return findings
+
+
+def diagnose_hierarchy(
+    contract: Contract, actual: list[ActualVersion]
+) -> list[Finding]:
+    """Relationship-level checks across business keys (temporal hierarchy).
+
+    Returns an empty list unless the contract declares parent_key_attribute.
+    """
+    return diagnose_temporal_hierarchy(contract, actual)
 
 
 def diagnose_current_snapshot(

@@ -72,6 +72,30 @@ ACTION_MAP: dict[str, tuple[str, str, str]] = {
         "Rebuild the current snapshot from the reconciled open version rows.",
         "medium",
     ),
+    "DIM_HIER_CYCLE": (
+        "BREAK_HIERARCHY_CYCLE",
+        "Review the co-existing parent edges and choose the correct parent "
+        "manually; no parent key is rewritten automatically.",
+        "high",
+    ),
+    "DIM_HIER_DANGLING_PARENT": (
+        "RESOLVE_DANGLING_PARENT",
+        "Confirm whether the parent key should be live during the edge "
+        "interval; correct the reference by manual review only.",
+        "medium",
+    ),
+    "DIM_HIER_AMBIGUOUS_PARENT": (
+        "RESOLVE_PARENT_AMBIGUITY",
+        "Reduce overlapping versions so each instant has exactly one parent "
+        "value for the business key.",
+        "medium",
+    ),
+    "DIM_HIER_UNDECIDED": (
+        "REVIEW_HIERARCHY_MANUALLY",
+        "Candidate combinations exceeded the budget; inspect the listed keys "
+        "and interval manually before trusting the hierarchy.",
+        "medium",
+    ),
 }
 
 

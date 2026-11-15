@@ -45,6 +45,7 @@ class Contract:
     delete_semantics: str
     sha256: str
     source_path: str = ""
+    parent_key_attribute: str | None = None
 
     def attrs_from_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         return {name: payload.get(name) for name in self.tracked_attributes}
@@ -63,6 +64,7 @@ class Contract:
             "same_time_policy": self.same_time_policy,
             "time_format": self.time_format,
             "delete_semantics": self.delete_semantics,
+            "parent_key_attribute": self.parent_key_attribute,
         }
         if include_hash:
             data["sha256"] = self.sha256
@@ -141,6 +143,7 @@ def parse_contract(document: Any, digest: str) -> Contract:
         raise DimhistError(
             "CFG_006", f"unsupported delete_semantics: {delete_semantics!r}"
         )
+    parent_attribute = _optional_parent_attribute(document, attrs, types)
 
     return Contract(
         schema_version=1,
@@ -156,7 +159,30 @@ def parse_contract(document: Any, digest: str) -> Contract:
         time_format=str(time_format),
         delete_semantics=str(delete_semantics),
         sha256=digest,
+        parent_key_attribute=parent_attribute,
     )
+
+
+def _optional_parent_attribute(
+    document: dict[str, Any], attrs: list[str], types: dict[str, Any]
+) -> str | None:
+    raw = document.get("parent_key_attribute")
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        raise DimhistError(
+            "CFG_009", "parent_key_attribute must be a non-empty string"
+        )
+    value = raw.strip()
+    if value not in attrs:
+        raise DimhistError(
+            "CFG_009", "parent_key_attribute must be one of tracked_attributes"
+        )
+    if types[value] != "string":
+        raise DimhistError(
+            "CFG_009", "parent_key_attribute must have attribute type string"
+        )
+    return value
 
 
 def _non_empty_string(value: Any, field: str) -> str:

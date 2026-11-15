@@ -9,7 +9,7 @@ from pathlib import Path
 from .actual import load_actual_history, load_current_snapshot
 from .asof import asof_stats, finalize_asof, reconcile_asof
 from .config import Contract, load_contract
-from .diagnose import diagnose_actual, diagnose_current_snapshot
+from .diagnose import diagnose_actual, diagnose_current_snapshot, diagnose_hierarchy
 from .ledger import Ledger
 from .model import (
     ActualVersion,
@@ -104,6 +104,7 @@ def run_pipeline(
     current_rows, current_sha = load_current_snapshot(contract, current_path)
     findings.extend(replay.findings)
     findings.extend(diagnose_actual(contract, replay.expected_versions, actual))
+    findings.extend(diagnose_hierarchy(contract, actual))
     findings.extend(
         diagnose_current_snapshot(contract, actual, current_rows)
     )

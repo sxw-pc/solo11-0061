@@ -27,6 +27,16 @@
 | `DIM_MISSING_EXPECTED` | high | 期望业务键在实际历史中完全没有行 | `CREATE_MISSING_VERSIONS` |
 | `DIM_INVALID_INTERVAL` | medium | `valid_to <= valid_from` | `REPAIR_INTERVAL` |
 | `DIM_CURRENT_SNAPSHOT_DRIFT` | medium | 开放实际行的属性多重集与当前快照 CSV 不一致 | `REBUILD_CURRENT_SNAPSHOT` |
+| `DIM_HIER_CYCLE` | high/medium | 父子边在同一时期真正同时成立成环；`certainty=necessary`（全部候选组合成立）为 high，`possible`（部分组合成立）为 medium | `BREAK_HIERARCHY_CYCLE` |
+| `DIM_HIER_DANGLING_PARENT` | medium/low | 父键值在边的存续区间内没有任何存活的父版本行；必然为 medium，可能为 low | `RESOLVE_DANGLING_PARENT` |
+| `DIM_HIER_AMBIGUOUS_PARENT` | medium | 同一业务键多个存活版本的父键值不一致，父子边指向存在歧义 | `RESOLVE_PARENT_AMBIGUITY` |
+| `DIM_HIER_UNDECIDED` | medium | 候选组合数超过预算，该区间判环未判定，不能视为正常 | `REVIEW_HIERARCHY_MANUALLY` |
+
+层级发现仅当契约声明 `parent_key_attribute` 时产生。`details.certainty` 区分
+必然违约（`necessary`）与可能违约（`possible`）；`details.edges` 给出可复核的
+成员行证据（`row_no`、`member_sk`、区间），`details.resolution_counts` 记录每个
+合并时期中成立该发现的候选组合数与总组合数。层级校验只读，不改源文件、不自动
+修父键。
 
 严重度用于报告排序与风险提示，不改变退出码。校准运行存在发现时仍可成功完成，
 因为输出是证据而非失败判定。
@@ -68,6 +78,7 @@ as-of 状态保存在 `asof_checks.status`，不是 `findings` 中的发现码�
 | `CFG_006` | `delete_semantics` 不支持 |
 | `CFG_007` | `time_format` 不支持 |
 | `CFG_008` | 契约字段名冲突或与业务键重名 |
+| `CFG_009` | `parent_key_attribute` 不是非空字符串、不在跟踪属性中、或类型不是 `string` |
 
 ## 6. 输入与运行错误码
 
@@ -101,7 +112,8 @@ ERROR <CODE>: <message>
 `BACKFILL_GAP`、`MERGE_DUPLICATE_VERSION`、`CLOSE_EXTRA_CURRENT`、
 `CREATE_CURRENT_VERSION`、`REWRITE_VERSION_ATTRIBUTES`、`RETIRE_ORPHAN`、
 `CREATE_MISSING_VERSIONS`、`REPAIR_INTERVAL`、`FIX_CURRENT_FLAG`、
-`REBUILD_CURRENT_SNAPSHOT`、`MANUAL_REVIEW`。
+`REBUILD_CURRENT_SNAPSHOT`、`BREAK_HIERARCHY_CYCLE`、`RESOLVE_DANGLING_PARENT`、
+`RESOLVE_PARENT_AMBIGUITY`、`REVIEW_HIERARCHY_MANUALLY`、`MANUAL_REVIEW`。
 
 所有动作的 `details.execution_mode` 均为 `dry_run_only`，且
 `review_required=true`。

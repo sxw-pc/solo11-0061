@@ -1,10 +1,14 @@
-"""Build an explainable, dry-run-only repair plan from findings."""
+"""Build explainable, dry-run-only repair plans and simulation documents."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from .model import Finding, PlanAction
+from .asof import asof_stats
+from .config import Contract
+from .model import ActualVersion, AsOfCheck, Finding, PlanAction
+from .simulate import SimulationOutcome, row_fingerprint
+from .util import canonical_json
 
 ACTION_MAP: dict[str, tuple[str, str, str]] = {
     "EVT_DUP_CONFLICT": (
@@ -122,3 +126,146 @@ def plan_stats(actions: list[PlanAction]) -> dict[str, Any]:
         "by_kind": dict(sorted(by_kind.items())),
         "by_risk": dict(sorted(by_risk.items())),
     }
+
+
+def build_simulation_document(
+    contract: Contract,
+    now: str,
+    outcome: SimulationOutcome,
+    plan: list[PlanAction],
+    findings: list[Finding],
+) -> dict[str, Any]:
+    """Render a simulation outcome as JSON, preserving plan and finding evidence."""
+    actions_by_id = {action.action_id: action for action in plan}
+    findings_by_id = {finding.finding_id: finding for finding in findings}
+    applied_by_id = {record.action_id: record for record in outcome.applied}
+    step_docs: list[dict[str, Any]] = []
+    selected: list[dict[str, Any]] = []
+    for step in outcome.steps:
+        record = applied_by_id[step.action_id]
+        doc: dict[str, Any] = {
+            "action_id": step.action_id,
+            "op": step.op,
+            "plan_action": step.plan_action,
+            "depends_on": sorted(outcome.depends[step.action_id]),
+            "preconditions": [
+                {"row": ref, "fingerprint": step.fingerprints[ref]}
+                for ref in step.targets
+            ],
+            "params": step.params,
+            "before": [_image(ref, row) for ref, row in record.consumed.items()],
+            "after": [_image(ref, row) for ref, row in record.produced.items()],
+            "status": "applied",
+        }
+        action = actions_by_id.get(step.plan_action or "")
+        if action is not None:
+            doc["evidence"] = {
+                "plan_action": action.to_dict(),
+                "findings": [
+                    findings_by_id[fid].to_dict()
+                    for fid in action.finding_ids
+                    if fid in findings_by_id
+                ],
+            }
+            selected.append(action.to_dict())
+        step_docs.append(doc)
+    eliminated, introduced = _diff_findings(
+        outcome.findings_before, outcome.findings_after
+    )
+    asof_eliminated, asof_introduced = _diff_asof(
+        outcome.asof_before, outcome.asof_after
+    )
+    return {
+        "schema_version": 1,
+        "mode": "simulation_only",
+        "generated_at": now,
+        "table": contract.table,
+        "contract_sha256": contract.sha256,
+        "mutates_source": False,
+        "generates_sql": False,
+        "application_order": outcome.order,
+        "steps": step_docs,
+        "findings": {
+            "before": len(outcome.findings_before),
+            "after": len(outcome.findings_after),
+            "eliminated": eliminated,
+            "introduced": introduced,
+        },
+        "asof": {
+            "before": asof_stats(outcome.asof_before),
+            "after": asof_stats(outcome.asof_after),
+            "eliminated": asof_eliminated,
+            "introduced": asof_introduced,
+        },
+        "rollback": {
+            "order": [record.action_id for record in reversed(outcome.applied)],
+            "steps": [
+                {
+                    "action_id": record.action_id,
+                    "op": record.op,
+                    "remove": list(record.produced),
+                    "restore": [
+                        _image(ref, row) for ref, row in record.consumed.items()
+                    ],
+                }
+                for record in reversed(outcome.applied)
+            ],
+        },
+        "source_plan": {"actions_total": len(plan), "selected": selected},
+    }
+
+
+def _image(ref: str, row: ActualVersion) -> dict[str, Any]:
+    return {
+        "ref": ref,
+        "row_no": row.row_no,
+        "member_sk": row.member_sk,
+        "natural_key": row.natural_key,
+        "attributes": dict(sorted(row.attrs.items())),
+        "valid_from": row.valid_from,
+        "valid_to": row.valid_to,
+        "is_current": row.is_current,
+        "source": row.source,
+        "updated_at": row.updated_at,
+        "fingerprint": row_fingerprint(row),
+    }
+
+
+def _diff_findings(
+    before: list[Finding], after: list[Finding]
+) -> tuple[list[Any], list[Any]]:
+    def key(finding: Finding) -> str:
+        return canonical_json(
+            [finding.code, finding.natural_key, finding.start, finding.end, finding.details]
+        )
+
+    before_map = {key(item): item for item in before}
+    after_map = {key(item): item for item in after}
+    eliminated = [
+        before_map[name].to_dict() for name in sorted(before_map.keys() - after_map.keys())
+    ]
+    introduced = [
+        after_map[name].to_dict() for name in sorted(after_map.keys() - before_map.keys())
+    ]
+    return eliminated, introduced
+
+
+def _diff_asof(
+    before: list[AsOfCheck], after: list[AsOfCheck]
+) -> tuple[list[Any], list[Any]]:
+    def key(check: AsOfCheck) -> str:
+        return canonical_json([check.natural_key, check.at, check.status, check.differences])
+
+    def doc(check: AsOfCheck) -> dict[str, Any]:
+        return {
+            "natural_key": check.natural_key,
+            "at": check.at,
+            "status": check.status,
+            "differences": check.differences,
+        }
+
+    before_map = {key(item): item for item in before if item.status != "match"}
+    after_map = {key(item): item for item in after if item.status != "match"}
+    eliminated = [doc(before_map[name]) for name in sorted(before_map.keys() - after_map.keys())]
+    introduced = [doc(after_map[name]) for name in sorted(after_map.keys() - before_map.keys())]
+    return eliminated, introduced

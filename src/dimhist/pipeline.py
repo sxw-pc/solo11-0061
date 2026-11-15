@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .actual import load_actual_history, load_current_snapshot
 from .asof import asof_stats, finalize_asof, reconcile_asof
@@ -20,8 +21,9 @@ from .model import (
     Finding,
     PlanAction,
 )
-from .planner import build_plan
+from .planner import build_plan, build_simulation_document
 from .replay import ingest_and_replay
+from .simulate import simulate_repairs
 from .util import (
     DimhistError,
     canonical_json,
@@ -154,6 +156,22 @@ def run_pipeline(
         event_stats=replay.stats,
         inputs=inputs,
         workspace=workspace,
+    )
+
+
+def run_plan_simulation(result: RunResult, request: dict[str, Any]) -> dict[str, Any]:
+    """Preview selected repair actions in memory; sources and ledger stay untouched."""
+    if isinstance(request, dict) and isinstance(request.get("steps"), list):
+        known = {action.action_id for action in result.plan}
+        for raw in request["steps"]:
+            linked = raw.get("plan_action") if isinstance(raw, dict) else None
+            if linked is not None and linked not in known:
+                raise DimhistError("SIM_001", f"unknown plan action: {linked}")
+    outcome = simulate_repairs(
+        result.contract, result.expected, result.actual, result.now, request
+    )
+    return build_simulation_document(
+        result.contract, result.now, outcome, result.plan, result.findings
     )
 
 

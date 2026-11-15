@@ -6,12 +6,7 @@ from collections import defaultdict
 
 from .config import Contract
 from .model import ActualVersion, CurrentRow, ExpectedVersion, Finding
-from .structural import (
-    diagnose_current_state,
-    diagnose_duplicate_versions,
-    diagnose_gaps,
-    diagnose_overlaps,
-)
+from .structural import diagnose_rows
 from .util import canonical_json
 
 
@@ -27,7 +22,7 @@ def diagnose_actual(
     for version in expected:
         by_key_expected[version.natural_key].append(version)
 
-    findings: list[Finding] = []
+    findings: list[Finding] = diagnose_rows(actual)
     for key in sorted(set(by_key_actual) | set(by_key_expected)):
         rows = sorted(
             by_key_actual.get(key, []),
@@ -37,10 +32,6 @@ def diagnose_actual(
             by_key_expected.get(key, []),
             key=lambda item: (item.valid_from, item.version_seq),
         )
-        findings.extend(diagnose_overlaps(key, rows))
-        findings.extend(diagnose_gaps(key, rows))
-        findings.extend(diagnose_duplicate_versions(key, rows))
-        findings.extend(diagnose_current_state(key, rows))
         if key not in by_key_actual and expected_rows:
             findings.append(
                 Finding(

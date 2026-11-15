@@ -18,6 +18,8 @@ class EventRecord:
     raw_sha256: str
     status: str = "ingested"
     raw_text: str = ""
+    transaction_id: str | None = None
+    transaction_seq: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -30,6 +32,8 @@ class EventRecord:
             "raw_line": self.raw_line,
             "raw_sha256": self.raw_sha256,
             "status": self.status,
+            "transaction_id": self.transaction_id,
+            "transaction_seq": self.transaction_seq,
         }
 
 
@@ -41,6 +45,7 @@ class ExpectedVersion:
     valid_from: str
     valid_to: str | None
     source_event_ids: tuple[str, ...] = ()
+    source_transaction_ids: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -50,6 +55,7 @@ class ExpectedVersion:
             "valid_from": self.valid_from,
             "valid_to": self.valid_to,
             "source_event_ids": list(self.source_event_ids),
+            "source_transaction_ids": list(self.source_transaction_ids),
         }
 
 
@@ -93,6 +99,51 @@ class CurrentRow:
             "attributes": dict(sorted(self.attrs.items())),
             "updated_at": self.updated_at,
         }
+
+
+@dataclass
+class TransactionRecord:
+    transaction_id: str
+    effective_at: str
+    member_event_ids: tuple[str, ...]
+    depends_on: tuple[str, ...]
+    status: str
+    quarantine_reason: str | None = None
+    order_classification: str | None = None
+    manifest_line: int = 0
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "transaction_id": self.transaction_id,
+            "effective_at": self.effective_at,
+            "member_event_ids": list(self.member_event_ids),
+            "depends_on": list(self.depends_on),
+            "status": self.status,
+            "quarantine_reason": self.quarantine_reason,
+            "order_classification": self.order_classification,
+            "manifest_line": self.manifest_line,
+            "details": self.details,
+        }
+
+
+@dataclass
+class TransactionEffect:
+    """A committed transaction folded into per-member replay units."""
+
+    transaction_id: str
+    effective_at: str
+    order_index: int
+    key_events: dict[str, list[EventRecord]]
+    key_payloads: dict[str, dict[str, Any]]
+
+
+@dataclass
+class TransactionPreparation:
+    records: list[TransactionRecord]
+    effects: list[TransactionEffect]
+    findings: list[Finding]
+    stats: dict[str, int]
 
 
 @dataclass
@@ -179,3 +230,4 @@ class IngestResult:
     expected_versions: list[ExpectedVersion]
     findings: list[Finding]
     stats: dict[str, int]
+    transactions: list[TransactionRecord] = field(default_factory=list)

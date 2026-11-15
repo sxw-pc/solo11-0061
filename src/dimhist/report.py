@@ -66,6 +66,7 @@ def build_report(result: RunResult) -> dict[str, Any]:
         "inputs": result.inputs,
         "summary": build_summary(result),
         "event_ledger": [event.to_dict() for event in result.events],
+        "transactions": [record.to_dict() for record in result.transactions],
         "expected_history": [version.to_dict() for version in result.expected],
         "actual_history": [version.to_dict() for version in result.actual],
         "current_snapshot": [row.to_dict() for row in result.current_rows],

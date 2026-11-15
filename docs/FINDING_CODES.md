@@ -9,8 +9,18 @@
 | --- | --- | --- | --- |
 | `EVT_DUP_CONFLICT` | high | 同一 event_id 出现内容不同的行；首行保留，后续行退出回放 | `REVIEW_EVENT_CONFLICT` |
 | `EVT_SAME_TIME_CONFLICT` | medium | 同一业务键、同一生效时刻的归并组内，同一属性出现多个不同值 | `REVIEW_EVENT_ORDER` |
+| `EVT_TX_QUARANTINED` | high | 事务不完整、成员内容冲突、依赖不可满足、循环依赖或次序结果真正冲突；整组隔离，成员事件全部退出回放 | `REVIEW_TRANSACTION` |
 
-两者的对象都保留在 SQLite `events` 表，并在 `details` 中记录行号和证据。
+前两者的对象都保留在 SQLite `events` 表，并在 `details` 中记录行号和证据。
+`EVT_TX_QUARANTINED` 的 `details.reason` 取值：`member_conflict`（成员 event_id
+内容冲突）、`missing_member`（清单声明的成员缺失或 transaction_id 不符）、
+`undeclared_member`（事件携带事务 ID 但未在清单声明）、`missing_seq`（成员缺
+事务内序号）、`duplicate_seq`（事务内序号重复）、`missing_commit`（事件携带
+事务 ID 但无提交清单声明）、`unmet_dependency`（依赖未知、指向更晚业务时刻或
+指向被隔离事务）、`dependency_cycle`（循环依赖，`details.cycle` 为最小互相依赖
+事务集）、`order_conflict`（多个可行次序产生不同结果，`details.conflicts` 记录
+成员、属性与各候选值）。被隔离事务的成员事件在 `events` 表中标记 `quarantined`，
+事务级证据写入 `transactions` 表。
 
 ## 2. 实际维表发现
 
@@ -55,6 +65,20 @@ as-of 状态保存在 `asof_checks.status`，不是 `findings` 中的发现码�
 | `noop` | 归并组最终状态与组前状态相同，没有生成版本 |
 | `duplicate_exact` | 与首条同 event_id 事件内容完全相同，去重 |
 | `duplicate_conflict` | 与首条同 event_id 事件内容不同，保留但不回放 |
+| `quarantined` | 所属事务被整组隔离，事件不参与回放 |
+
+## 4.1 事务状态
+
+事务记录在 SQLite `transactions` 表与报告 `transactions` 段：
+
+| 状态 | 含义 |
+| --- | --- |
+| `committed` | 事务完整且无冲突，已按全局可行次序整体进入期望历史 |
+| `quarantined` | 事务被整组隔离，`quarantine_reason` 给出隔离原因 |
+
+已提交事务的 `order_classification`：`unique` 表示该业务时刻只有一个可行次序；
+`equivalent` 表示存在多个可行次序但已证明结果相同（可交换）。多个次序产生不同
+结果属于真正冲突，事务被隔离（`order_conflict`），不会用 event_id 字典序掩盖。
 
 ## 5. 契约错误码
 
@@ -97,8 +121,8 @@ ERROR <CODE>: <message>
 
 ## 7. 计划动作码
 
-`REVIEW_EVENT_CONFLICT`、`REVIEW_EVENT_ORDER`、`RESOLVE_OVERLAP`、
-`BACKFILL_GAP`、`MERGE_DUPLICATE_VERSION`、`CLOSE_EXTRA_CURRENT`、
+`REVIEW_EVENT_CONFLICT`、`REVIEW_EVENT_ORDER`、`REVIEW_TRANSACTION`、
+`RESOLVE_OVERLAP`、`BACKFILL_GAP`、`MERGE_DUPLICATE_VERSION`、`CLOSE_EXTRA_CURRENT`、
 `CREATE_CURRENT_VERSION`、`REWRITE_VERSION_ATTRIBUTES`、`RETIRE_ORPHAN`、
 `CREATE_MISSING_VERSIONS`、`REPAIR_INTERVAL`、`FIX_CURRENT_FLAG`、
 `REBUILD_CURRENT_SNAPSHOT`、`MANUAL_REVIEW`。

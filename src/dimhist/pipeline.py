@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .actual import load_actual_history, load_current_snapshot
@@ -19,6 +19,7 @@ from .model import (
     ExpectedVersion,
     Finding,
     PlanAction,
+    TransactionRecord,
 )
 from .planner import build_plan
 from .replay import ingest_and_replay
@@ -55,6 +56,7 @@ class RunResult:
     event_stats: dict[str, int]
     inputs: list[dict[str, str]]
     workspace: Path
+    transactions: list[TransactionRecord] = field(default_factory=list)
 
 
 def init_workspace(workspace: Path) -> None:
@@ -91,15 +93,19 @@ def run_pipeline(
     event_path: Path | None = None,
     history_path: Path | None = None,
     current_path: Path | None = None,
+    transaction_path: Path | None = None,
 ) -> RunResult:
     contract_path = contract_path or workspace / "contracts" / "dimension_member.json"
     event_path = event_path or workspace / "data" / "events" / "change_events.jsonl"
     history_path = history_path or workspace / "data" / "dimension" / "member_history.csv"
     current_path = current_path or workspace / "data" / "dimension" / "member_current.csv"
+    if transaction_path is None:
+        candidate = workspace / "data" / "events" / "transaction_commits.jsonl"
+        transaction_path = candidate if candidate.is_file() else None
     normalized_now = normalize_time(now, code="NOW_001", field="now")
 
     contract = load_contract(contract_path)
-    replay = ingest_and_replay(contract, event_path)
+    replay = ingest_and_replay(contract, event_path, transaction_path)
     actual, findings = load_actual_history(contract, history_path)
     current_rows, current_sha = load_current_snapshot(contract, current_path)
     findings.extend(replay.findings)
@@ -119,6 +125,15 @@ def run_pipeline(
         _input(workspace, "actual_history", history_path, sha256_file(history_path)),
         _input(workspace, "current_snapshot", current_path, current_sha),
     ]
+    if transaction_path is not None:
+        inputs.append(
+            _input(
+                workspace,
+                "transaction_commits",
+                transaction_path,
+                sha256_file(transaction_path),
+            )
+        )
 
     ledger_path = workspace / "ledger" / "dimhist.sqlite3"
     with Ledger(ledger_path) as ledger:
@@ -131,6 +146,7 @@ def run_pipeline(
         for item in inputs:
             ledger.add_artifact(item["kind"], item["path"], item["sha256"])
         ledger.add_events(replay.events)
+        ledger.add_transactions(replay.transactions)
         ledger.add_expected(replay.expected_versions)
         ledger.add_actual(actual)
         ledger.add_current_snapshot(current_rows)
@@ -154,6 +170,7 @@ def run_pipeline(
         event_stats=replay.stats,
         inputs=inputs,
         workspace=workspace,
+        transactions=replay.transactions,
     )
 
 

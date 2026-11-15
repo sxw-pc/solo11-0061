@@ -14,6 +14,7 @@ from .model import (
     ExpectedVersion,
     Finding,
     PlanAction,
+    TransactionRecord,
 )
 from .util import canonical_json
 
@@ -33,7 +34,14 @@ CREATE TABLE IF NOT EXISTS expected_versions (
   natural_key TEXT NOT NULL, version_seq INTEGER NOT NULL,
   attrs_json TEXT NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT,
   source_event_ids_json TEXT NOT NULL,
+  source_transaction_ids_json TEXT NOT NULL DEFAULT '[]',
   PRIMARY KEY (natural_key, version_seq)
+);
+CREATE TABLE IF NOT EXISTS transactions (
+  transaction_id TEXT PRIMARY KEY, effective_at TEXT NOT NULL,
+  status TEXT NOT NULL, quarantine_reason TEXT, order_classification TEXT,
+  member_event_ids_json TEXT NOT NULL, depends_on_json TEXT NOT NULL,
+  manifest_line INTEGER NOT NULL, details_json TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS actual_versions (
   row_no INTEGER NOT NULL, member_sk TEXT NOT NULL, natural_key TEXT NOT NULL,
@@ -68,6 +76,7 @@ TABLE_NAMES = {
     "artifacts",
     "events",
     "expected_versions",
+    "transactions",
     "actual_versions",
     "current_snapshot",
     "findings",
@@ -89,6 +98,7 @@ class Ledger:
             "artifacts",
             "events",
             "expected_versions",
+            "transactions",
             "actual_versions",
             "current_snapshot",
             "findings",
@@ -137,8 +147,9 @@ class Ledger:
     def add_expected(self, versions: Iterable[ExpectedVersion]) -> None:
         self.connection.executemany(
             "INSERT INTO expected_versions(natural_key, version_seq, attrs_json, "
-            "valid_from, valid_to, source_event_ids_json) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "valid_from, valid_to, source_event_ids_json, "
+            "source_transaction_ids_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     version.natural_key,
@@ -147,8 +158,31 @@ class Ledger:
                     version.valid_from,
                     version.valid_to,
                     canonical_json(list(version.source_event_ids)),
+                    canonical_json(list(version.source_transaction_ids)),
                 )
                 for version in versions
+            ],
+        )
+
+    def add_transactions(self, records: Iterable[TransactionRecord]) -> None:
+        self.connection.executemany(
+            "INSERT INTO transactions(transaction_id, effective_at, status, "
+            "quarantine_reason, order_classification, member_event_ids_json, "
+            "depends_on_json, manifest_line, details_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    record.transaction_id,
+                    record.effective_at,
+                    record.status,
+                    record.quarantine_reason,
+                    record.order_classification,
+                    canonical_json(list(record.member_event_ids)),
+                    canonical_json(list(record.depends_on)),
+                    record.manifest_line,
+                    canonical_json(record.details),
+                )
+                for record in records
             ],
         )
 

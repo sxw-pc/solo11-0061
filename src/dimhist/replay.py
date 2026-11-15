@@ -7,16 +7,35 @@ from typing import Any
 
 from .config import Contract
 from .io_utils import read_jsonl
-from .model import EventRecord, ExpectedVersion, Finding, IngestResult
+from .model import (
+    EventRecord,
+    ExpectedVersion,
+    Finding,
+    IngestResult,
+    TransactionEffect,
+)
 from .normalize import deduplicate, parse_event
+from .transactions import load_commit_manifest, prepare_transactions
 from .util import canonical_json
 
 
-def ingest_and_replay(contract: Contract, path: Path) -> IngestResult:
+def ingest_and_replay(
+    contract: Contract, path: Path, transaction_path: Path | None = None
+) -> IngestResult:
     raw_lines, _ = read_jsonl(path)
     parsed = [parse_event(contract, raw) for raw in raw_lines]
     events, active, findings, stats = deduplicate(contract, parsed)
-    versions, replay_findings, replay_stats = _replay(contract, active)
+    declarations = (
+        load_commit_manifest(transaction_path)
+        if transaction_path is not None
+        else []
+    )
+    preparation = prepare_transactions(parsed, active, declarations)
+    findings.extend(preparation.findings)
+    stats.update(preparation.stats)
+    versions, replay_findings, replay_stats = _replay(
+        contract, active, preparation.effects
+    )
     findings.extend(replay_findings)
     stats.update(replay_stats)
     stats["event_findings"] = len(findings)
@@ -25,41 +44,43 @@ def ingest_and_replay(contract: Contract, path: Path) -> IngestResult:
         expected_versions=versions,
         findings=findings,
         stats=stats,
+        transactions=preparation.records,
     )
 
 
 def _replay(
-    contract: Contract, active: list[EventRecord]
+    contract: Contract,
+    active: list[EventRecord],
+    effects: list[TransactionEffect],
 ) -> tuple[list[ExpectedVersion], list[Finding], dict[str, int]]:
-    ordered = sorted(
-        active,
-        key=lambda event: (
-            event.natural_key,
-            event.effective_at,
-            event.sequence,
-            event.event_id,
-            event.raw_line,
-        ),
-    )
+    groups: dict[str, dict[str, dict[str, list[Any]]]] = {}
+    for event in active:
+        if event.transaction_id is not None:
+            continue
+        moments = groups.setdefault(event.natural_key, {})
+        moments.setdefault(event.effective_at, {"events": [], "txs": []})[
+            "events"
+        ].append(event)
+    for effect in effects:
+        for key in effect.key_events:
+            moments = groups.setdefault(key, {})
+            moments.setdefault(effect.effective_at, {"events": [], "txs": []})[
+                "txs"
+            ].append(effect)
+
     versions: list[ExpectedVersion] = []
     findings: list[Finding] = []
-    current_key: str | None = None
-    groups: dict[str, list[EventRecord]] = {}
-    for event in ordered:
-        if event.natural_key != current_key:
-            if current_key is not None:
-                _finish_key(contract, current_key, groups, versions, findings)
-            current_key = event.natural_key
-            groups = {}
-        groups.setdefault(event.effective_at, []).append(event)
-    if current_key is not None:
-        _finish_key(contract, current_key, groups, versions, findings)
+    for natural_key in sorted(groups):
+        _finish_key(contract, natural_key, groups[natural_key], versions, findings)
 
     stats = {
         "applied_events": sum(1 for event in active if event.status == "applied"),
         "noop_events": sum(1 for event in active if event.status == "noop"),
         "superseded_same_time": sum(
             1 for event in active if event.status == "superseded_same_time"
+        ),
+        "quarantined_events": sum(
+            1 for event in active if event.status == "quarantined"
         ),
         "same_time_conflict_groups": sum(
             1 for finding in findings if finding.code == "EVT_SAME_TIME_CONFLICT"
@@ -72,25 +93,37 @@ def _replay(
 def _finish_key(
     contract: Contract,
     natural_key: str,
-    groups: dict[str, list[EventRecord]],
+    moments: dict[str, dict[str, list[Any]]],
     versions: list[ExpectedVersion],
     findings: list[Finding],
 ) -> None:
     state: dict[str, Any] | None = None
     key_versions: list[ExpectedVersion] = []
-    for effective_at in sorted(groups):
-        group = groups[effective_at]
+    for effective_at in sorted(moments):
+        group = moments[effective_at]
+        plain = sorted(
+            group["events"],
+            key=lambda event: (event.sequence, event.event_id, event.raw_line),
+        )
+        txs = sorted(group["txs"], key=lambda effect: effect.order_index)
+        fold_events = plain + [
+            member for tx in txs for member in tx.key_events[natural_key]
+        ]
         prior = dict(state) if state is not None else None
         merged = (
             dict(state)
             if state is not None
             else {name: None for name in contract.tracked_attributes}
         )
-        conflicts = _same_time_conflicts(contract, group)
-        for event in group:
+        conflicts = _same_time_conflicts(contract, plain)
+        for event in plain:
             for name in contract.tracked_attributes:
                 if name in event.payload:
                     merged[name] = event.payload[name]
+        for tx in txs:
+            for name in contract.tracked_attributes:
+                if name in tx.key_payloads[natural_key]:
+                    merged[name] = tx.key_payloads[natural_key][name]
         if conflicts:
             findings.append(
                 Finding(
@@ -105,9 +138,9 @@ def _finish_key(
                     ),
                     details={
                         "effective_at": effective_at,
-                        "event_ids": [event.event_id for event in group],
+                        "event_ids": [event.event_id for event in plain],
                         "conflicting_attributes": conflicts,
-                        "selected_event_id": group[-1].event_id,
+                        "selected_event_id": plain[-1].event_id,
                     },
                 )
             )
@@ -115,12 +148,12 @@ def _finish_key(
             merged[name] == prior.get(name) for name in contract.tracked_attributes
         )
         if no_change:
-            for event in group:
+            for event in fold_events:
                 event.status = "noop"
             state = merged
             continue
-        group[-1].status = "applied"
-        for event in group[:-1]:
+        fold_events[-1].status = "applied"
+        for event in fold_events[:-1]:
             event.status = "superseded_same_time"
         key_versions.append(
             ExpectedVersion(
@@ -129,7 +162,8 @@ def _finish_key(
                 attrs={name: merged[name] for name in contract.tracked_attributes},
                 valid_from=effective_at,
                 valid_to=None,
-                source_event_ids=tuple(event.event_id for event in group),
+                source_event_ids=tuple(event.event_id for event in fold_events),
+                source_transaction_ids=tuple(tx.transaction_id for tx in txs),
             )
         )
         state = merged

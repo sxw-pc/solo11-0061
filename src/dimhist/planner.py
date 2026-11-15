@@ -17,6 +17,12 @@ ACTION_MAP: dict[str, tuple[str, str, str]] = {
         "Confirm the business sequence for events sharing an effective timestamp.",
         "low",
     ),
+    "EVT_TX_QUARANTINED": (
+        "REVIEW_TRANSACTION",
+        "Inspect the quarantined transaction, repair its members, ordering or "
+        "dependencies with the business owners, and replay again.",
+        "high",
+    ),
     "DIM_OVERLAP": (
         "RESOLVE_OVERLAP",
         "Trim or close overlapping versions so every instant has at most one match.",

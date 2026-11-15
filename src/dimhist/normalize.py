@@ -68,6 +68,13 @@ def parse_event(contract: Contract, raw: RawLine) -> EventRecord:
         for name in contract.tracked_attributes
         if name in payload_raw
     }
+    transaction_id = _optional_transaction_id(document, raw.line_no)
+    transaction_seq = _optional_transaction_seq(document, raw.line_no)
+    if transaction_seq is not None and transaction_id is None:
+        raise DimhistError(
+            "INP_003",
+            f"event log line {raw.line_no}: transaction_seq requires transaction_id",
+        )
     return EventRecord(
         event_id=event_id,
         natural_key=natural_key,
@@ -78,6 +85,8 @@ def parse_event(contract: Contract, raw: RawLine) -> EventRecord:
         raw_line=raw.line_no,
         raw_sha256=raw.sha256,
         raw_text=raw.text,
+        transaction_id=transaction_id,
+        transaction_seq=transaction_seq,
     )
 
 
@@ -135,6 +144,8 @@ def _identity(event: EventRecord) -> tuple[Any, ...]:
         event.effective_at,
         event.sequence,
         canonical_json(event.payload),
+        event.transaction_id,
+        event.transaction_seq,
     )
 
 
@@ -146,6 +157,10 @@ def _differing_fields(first: EventRecord, duplicate: EventRecord) -> list[str]:
         fields.append("effective_at")
     if first.sequence != duplicate.sequence:
         fields.append("sequence")
+    if first.transaction_id != duplicate.transaction_id:
+        fields.append("transaction_id")
+    if first.transaction_seq != duplicate.transaction_seq:
+        fields.append("transaction_seq")
     names = sorted(set(first.payload) | set(duplicate.payload))
     fields.extend(
         f"payload.{name}"
@@ -163,3 +178,28 @@ def _required_text(document: dict[str, Any], field: str, line_no: int) -> str:
             "INP_003", f"event log line {line_no}: {field} must be a non-empty string"
         )
     return value.strip()
+
+
+def _optional_transaction_id(document: dict[str, Any], line_no: int) -> str | None:
+    value = document.get("transaction_id")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise DimhistError(
+            "INP_003",
+            f"event log line {line_no}: transaction_id must be a non-empty string",
+        )
+    return value.strip()
+
+
+def _optional_transaction_seq(document: dict[str, Any], line_no: int) -> int | None:
+    if "transaction_seq" not in document or document["transaction_seq"] is None:
+        return None
+    try:
+        return require_positive_sequence(document["transaction_seq"])
+    except DimhistError as exc:
+        raise DimhistError(
+            "INP_003",
+            f"event log line {line_no}: transaction_seq must be a non-negative "
+            "integer",
+        ) from exc

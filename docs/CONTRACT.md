@@ -81,6 +81,40 @@
 
 去重和归并细节见 [DESIGN.md](DESIGN.md) 第 4、5 节。
 
+### 3.1 事务事件字段（可选）
+
+事件行可额外携带两个字段，把多条成员事件绑定为一个跨成员业务事务：
+
+| 字段 | 约束 |
+| --- | --- |
+| `transaction_id` | 非空字符串；出现即表示该事件属于一个事务 |
+| `transaction_seq` | 非负整数，事务内序号；携带它必须同时携带 `transaction_id` |
+
+两个字段都会参与 event_id 去重的内容一致性判定：同 event_id 但事务字段不同
+视为内容冲突。只携带事务字段而没有提交清单声明的事件会被隔离
+（`missing_commit`），不会按普通事件回放。
+
+## 3.2 事务提交清单 JSONL（可选）
+
+默认路径 `<workspace>/data/events/transaction_commits.jsonl`；文件不存在时按无
+事务处理。每行一个 JSON 对象：
+
+```json
+{"transaction_id":"TX-1","effective_at":"2024-03-01T00:00:00Z","members":["EVT-101","EVT-102"],"depends_on":["TX-0"]}
+```
+
+| 字段 | 必填 | 约束 |
+| --- | --- | --- |
+| `transaction_id` | 是 | 非空字符串，清单内唯一 |
+| `effective_at` | 是 | 事务生效业务时刻，UTC ISO8601 整秒 |
+| `members` | 是 | 非空字符串数组，声明成员 event_id 集合，不允许重复 |
+| `depends_on` | 否 | 字符串数组，声明必须先于本事务生效的事务 ID |
+
+清单声明的成员集合必须与事件日志中携带该 `transaction_id` 的事件集合完全一致；
+事务的生效时刻以清单为准，成员事件自带的 `effective_at` 仅作为证据保留。
+清单文件 sha256 写入台账 `artifacts`（kind 为 `transaction_commits`）与报告
+`inputs`。语义细节见 [DESIGN.md](DESIGN.md) 第 5.1 节。
+
 ## 4. 实际历史 CSV
 
 表头必须包含：
@@ -135,7 +169,8 @@ SQLite 文件默认位于 `<workspace>/ledger/dimhist.sqlite3`。表：
 | `meta` | schema 版本、生成时间、表名、契约哈希、as-of now、计数 |
 | `artifacts` | 输入 kind、相对路径和 sha256 |
 | `events` | 全部非空事件行及状态、payload、原始行号、行哈希、原始 JSON |
-| `expected_versions` | 回放得到的期望版本链 |
+| `transactions` | 事务 ID、生效时刻、状态、隔离原因、次序分类、成员与依赖证据 |
+| `expected_versions` | 回放得到的期望版本链（含来源事件与来源事务证据） |
 | `actual_versions` | 实际历史行 |
 | `current_snapshot` | 当前快照行 |
 | `findings` | 发现及规范 details |
@@ -153,6 +188,7 @@ contract
 inputs[]
 summary
 event_ledger[]
+transactions[]
 expected_history[]
 actual_history[]
 current_snapshot[]

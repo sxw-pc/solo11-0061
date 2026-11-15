@@ -54,6 +54,8 @@ def render_markdown(report: dict[str, Any]) -> str:
             )
     else:
         lines.append("_No findings._")
+    lines.extend(["", "## 复核分组 · Review triage", ""])
+    lines.extend(_triage_lines(report["triage"]))
     lines.extend(["", "## As-of reconciliation", ""])
     lines.append(
         "Status counts: `"
@@ -166,6 +168,23 @@ def render_html(report: dict[str, Any]) -> str:
         for item in report["asof_checks"]
         if item["status"] != "match"
     ) or '<tr><td colspan="5" class="empty">All sampled instants match.</td></tr>'
+    triage = report["triage"]
+    triage_rows = "".join(
+        "<tr><td>{}</td><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>".format(
+            html.escape(group["group_id"]),
+            html.escape(group["root_finding_id"]),
+            html.escape(group["natural_key"]),
+            html.escape(", ".join(str(row) for row in group["untrustworthy_rows"])),
+            html.escape(
+                ", ".join(
+                    item["finding_id"] for item in group["derived_findings"]
+                )
+                or "-"
+            ),
+            html.escape(", ".join(str(row) for row in group["proof_rows"])),
+        )
+        for group in triage["groups"]
+    ) or '<tr><td colspan="6" class="empty">No root-cause groups identified.</td></tr>'
     events = "".join(
         "<tr><td>{}</td><td>{}</td><td><code>{}</code></td><td>{}</td><td>{}</td></tr>".format(
             html.escape(str(event["raw_line"])),
@@ -208,6 +227,9 @@ table {{ width:100%; border-collapse:collapse; font-size:13.5px; background:var(
 </tbody></table>
 <h2>Findings</h2>
 <table><thead><tr><th>ID</th><th>Code</th><th>Severity</th><th>Key</th><th>Interval</th><th>Message</th></tr></thead><tbody>{finding_rows}</tbody></table>
+<h2>复核分组 · Review triage</h2>
+<p class="muted">Review grouping only: no finding is removed, no history is rewritten, no repair is executed. Root causes: {triage['root_cause_count']} · derived symptoms: {triage['derived_count']} · unattributed: {triage['unattributed_count']}.</p>
+<table><thead><tr><th>Group</th><th>Root finding</th><th>Key</th><th>Untrustworthy rows</th><th>Derived findings</th><th>Proof rows</th></tr></thead><tbody>{triage_rows}</tbody></table>
 <h2>As-of mismatches</h2>
 <table><thead><tr><th>Check</th><th>Key</th><th>At</th><th>Status</th><th>Actual SKs</th></tr></thead><tbody>{asof_rows}</tbody></table>
 <h2>Dry-run repair plan</h2>
@@ -251,6 +273,44 @@ def render_plan_markdown(document: dict[str, Any]) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _triage_lines(triage: dict[str, Any]) -> list[str]:
+    lines = [
+        "> 复核分组仅组织证据：不删除任何发现、不改写历史、不自动修复。"
+        " Review grouping only; raw findings and plan references are unchanged.",
+        "",
+        "Root causes: `{root}` · derived symptoms: `{derived}` · unattributed: "
+        "`{unattributed}` · findings total: `{total}`".format(
+            root=triage["root_cause_count"],
+            derived=triage["derived_count"],
+            unattributed=triage["unattributed_count"],
+            total=triage["findings_total"],
+        ),
+        "",
+    ]
+    if triage["groups"]:
+        lines.append("| Group | Root finding | Key | Untrustworthy rows | Derived findings | Proof rows |")
+        lines.append("| --- | --- | --- | --- | --- | --- |")
+        for group in triage["groups"]:
+            derived = ", ".join(
+                item["finding_id"] for item in group["derived_findings"]
+            ) or "-"
+            lines.append(
+                "| {gid} | `{root}` | `{key}` | {rows} | {derived} | {proof} |".format(
+                    gid=group["group_id"],
+                    root=_md(group["root_finding_id"]),
+                    key=_md(group["natural_key"]),
+                    rows=", ".join(str(row) for row in group["untrustworthy_rows"]),
+                    derived=_md(derived),
+                    proof=", ".join(str(row) for row in group["proof_rows"]),
+                )
+            )
+    else:
+        lines.append("_No root-cause groups identified._")
+    unattributed = ", ".join(triage["unattributed_findings"]) or "-"
+    lines.extend(["", f"Unattributed findings: {_md(unattributed)}"])
+    return lines
 
 
 def _history_table(rows: list[dict[str, Any]], expected: bool) -> list[str]:

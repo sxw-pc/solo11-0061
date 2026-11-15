@@ -99,6 +99,8 @@ class DimhistHandler(BaseHTTPRequestHandler):
                     {"mode": "dry_run_only", "count": len(items), "actions": items},
                     head,
                 )
+            if path == "/api/triage":
+                return self._json(self.server.report["triage"], head)
             if path == "/api/events":
                 items = _filtered(
                     self.server.report["event_ledger"],

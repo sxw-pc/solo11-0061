@@ -14,6 +14,7 @@ from .model import (
     ExpectedVersion,
     Finding,
     PlanAction,
+    TriageView,
 )
 from .util import canonical_json
 
@@ -61,6 +62,11 @@ CREATE TABLE IF NOT EXISTS plan_actions (
   rationale TEXT NOT NULL, risk TEXT NOT NULL, review_required INTEGER NOT NULL,
   details_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS triage_groups (
+  group_id TEXT PRIMARY KEY, root_finding_id TEXT NOT NULL,
+  natural_key TEXT NOT NULL, untrustworthy_rows_json TEXT NOT NULL,
+  derived_json TEXT NOT NULL, proof_rows_json TEXT NOT NULL
+);
 """
 
 TABLE_NAMES = {
@@ -73,6 +79,7 @@ TABLE_NAMES = {
     "findings",
     "asof_checks",
     "plan_actions",
+    "triage_groups",
 }
 
 
@@ -94,6 +101,7 @@ class Ledger:
             "findings",
             "asof_checks",
             "plan_actions",
+            "triage_groups",
         ):
             self.connection.execute(f"DROP TABLE IF EXISTS {table}")
         self.connection.executescript(SCHEMA)
@@ -248,6 +256,26 @@ class Ledger:
                     canonical_json(action.details),
                 )
                 for action in actions
+            ],
+        )
+
+    def add_triage(self, view: TriageView) -> None:
+        self.connection.executemany(
+            "INSERT INTO triage_groups(group_id, root_finding_id, natural_key, "
+            "untrustworthy_rows_json, derived_json, proof_rows_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    group.group_id,
+                    group.root_finding_id,
+                    group.natural_key,
+                    canonical_json(list(group.untrustworthy_rows)),
+                    canonical_json(
+                        [item.to_dict() for item in group.derived]
+                    ),
+                    canonical_json(list(group.proof_rows)),
+                )
+                for group in view.groups
             ],
         )
 

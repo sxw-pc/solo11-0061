@@ -19,9 +19,11 @@ from .model import (
     ExpectedVersion,
     Finding,
     PlanAction,
+    TriageView,
 )
 from .planner import build_plan
 from .replay import ingest_and_replay
+from .triage import triage_findings
 from .util import (
     DimhistError,
     canonical_json,
@@ -52,6 +54,7 @@ class RunResult:
     findings: list[Finding]
     asof_checks: list[AsOfCheck]
     plan: list[PlanAction]
+    triage: TriageView
     event_stats: dict[str, int]
     inputs: list[dict[str, str]]
     workspace: Path
@@ -112,6 +115,9 @@ def run_pipeline(
         reconcile_asof(contract, replay.expected_versions, actual, normalized_now)
     )
     plan = build_plan(findings)
+    triage = triage_findings(
+        contract, replay.expected_versions, actual, current_rows, findings
+    )
 
     inputs = [
         _input(workspace, "contract", contract_path, contract.sha256),
@@ -137,6 +143,7 @@ def run_pipeline(
         ledger.add_findings(findings)
         ledger.add_asof(checks)
         ledger.add_plan(plan)
+        ledger.add_triage(triage)
         ledger.set_meta("finding_count", str(len(findings)))
         ledger.set_meta("asof_mismatch_count", str(asof_stats(checks)["mismatches"]))
         ledger.commit()
@@ -151,6 +158,7 @@ def run_pipeline(
         findings=findings,
         asof_checks=checks,
         plan=plan,
+        triage=triage,
         event_stats=replay.stats,
         inputs=inputs,
         workspace=workspace,

@@ -179,3 +179,86 @@ class IngestResult:
     expected_versions: list[ExpectedVersion]
     findings: list[Finding]
     stats: dict[str, int]
+
+
+@dataclass
+class DerivedFinding:
+    """A finding proven to vanish once untrustworthy rows are removed."""
+
+    finding_id: str
+    code: str
+    method: str
+    removed_rows: tuple[int, ...]
+    remaining_rows: tuple[int, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "finding_id": self.finding_id,
+            "code": self.code,
+            "proof": {
+                "method": self.method,
+                "removed_rows": list(self.removed_rows),
+                "remaining_rows": list(self.remaining_rows),
+                "explanation": (
+                    "violation absent after removing the untrustworthy row(s); "
+                    "kept as a derived symptom, not deleted"
+                ),
+            },
+        }
+
+
+@dataclass
+class TriageGroup:
+    """One root cause plus the findings proven to be its derived symptoms."""
+
+    group_id: str
+    root_finding_id: str
+    root_code: str
+    natural_key: str
+    untrustworthy_rows: tuple[int, ...]
+    derived: tuple[DerivedFinding, ...]
+    proof_rows: tuple[int, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "group_id": self.group_id,
+            "root_finding_id": self.root_finding_id,
+            "root_code": self.root_code,
+            "natural_key": self.natural_key,
+            "untrustworthy_rows": list(self.untrustworthy_rows),
+            "derived_findings": [item.to_dict() for item in self.derived],
+            "proof_rows": list(self.proof_rows),
+        }
+
+
+@dataclass
+class TriageView:
+    """Review grouping over the raw findings; never rewrites history."""
+
+    groups: tuple[TriageGroup, ...]
+    unattributed: tuple[str, ...]
+    findings_total: int
+
+    def to_dict(self) -> dict[str, Any]:
+        derived_count = sum(len(group.derived) for group in self.groups)
+        root_count = len(self.groups)
+        return {
+            "kind": "review_grouping",
+            "read_only": True,
+            "mutates_history": False,
+            "auto_repair": False,
+            "note": (
+                "Review grouping only: raw findings, counts and plan references "
+                "are unchanged; no history is rewritten and no repair is executed."
+            ),
+            "findings_total": self.findings_total,
+            "root_cause_count": root_count,
+            "derived_count": derived_count,
+            "unattributed_count": len(self.unattributed),
+            "partition_complete": (
+                root_count + derived_count + len(self.unattributed)
+                == self.findings_total
+            ),
+            "groups": [group.to_dict() for group in self.groups],
+            "unattributed_findings": list(self.unattributed),
+        }

@@ -70,6 +70,7 @@ def build_report(result: RunResult) -> dict[str, Any]:
         "actual_history": [version.to_dict() for version in result.actual],
         "current_snapshot": [row.to_dict() for row in result.current_rows],
         "findings": [finding.to_dict() for finding in result.findings],
+        "triage": result.triage.to_dict(),
         "asof_checks": [check.to_dict() for check in result.asof_checks],
         "plan": [action.to_dict() for action in result.plan],
     }

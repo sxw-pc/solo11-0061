@@ -37,39 +37,57 @@ def diagnose_actual(
             by_key_expected.get(key, []),
             key=lambda item: (item.valid_from, item.version_seq),
         )
-        findings.extend(diagnose_overlaps(key, rows))
-        findings.extend(diagnose_gaps(key, rows))
-        findings.extend(diagnose_duplicate_versions(key, rows))
-        findings.extend(diagnose_current_state(key, rows))
-        if key not in by_key_actual and expected_rows:
-            findings.append(
-                Finding(
-                    code="DIM_MISSING_EXPECTED",
-                    severity="high",
-                    phase="diagnose",
-                    natural_key=key,
-                    message=f"expected member {key} has no actual version rows",
-                    details={
-                        "expected_versions": len(expected_rows),
-                        "expected_from": expected_rows[0].valid_from,
-                    },
-                )
+        findings.extend(diagnose_key(contract, key, expected_rows, rows))
+    return findings
+
+
+def diagnose_key(
+    contract: Contract,
+    key: str,
+    expected_rows: list[ExpectedVersion],
+    rows: list[ActualVersion],
+) -> list[Finding]:
+    """Run every per-key history diagnostic for one natural key.
+
+    This is the scoped unit reused by the triage counterfactual proofs: it
+    touches only the rows of ``key`` and never triggers event replay, as-of
+    sampling or any other pipeline stage.
+    """
+    findings: list[Finding] = []
+    findings.extend(diagnose_overlaps(key, rows))
+    findings.extend(diagnose_gaps(key, rows))
+    findings.extend(diagnose_duplicate_versions(key, rows))
+    findings.extend(diagnose_current_state(key, rows))
+    if not rows and expected_rows:
+        findings.append(
+            Finding(
+                code="DIM_MISSING_EXPECTED",
+                severity="high",
+                phase="diagnose",
+                natural_key=key,
+                message=f"expected member {key} has no actual version rows",
+                details={
+                    "expected_versions": len(expected_rows),
+                    "expected_from": expected_rows[0].valid_from,
+                },
             )
-        if key not in by_key_expected and rows:
-            findings.append(
-                Finding(
-                    code="DIM_ORPHAN_ACTUAL",
-                    severity="medium",
-                    phase="diagnose",
-                    natural_key=key,
-                    message=f"actual member {key} has no matching change events",
-                    details={
-                        "actual_rows": len(rows),
-                        "member_sks": [row.member_sk for row in rows],
-                    },
-                )
+        )
+    if rows and not expected_rows:
+        findings.append(
+            Finding(
+                code="DIM_ORPHAN_ACTUAL",
+                severity="medium",
+                phase="diagnose",
+                natural_key=key,
+                message=f"actual member {key} has no matching change events",
+                details={
+                    "actual_rows": len(rows),
+                    "member_sks": [row.member_sk for row in rows],
+                    "row_nos": [row.row_no for row in rows],
+                },
             )
-        findings.extend(_diagnose_attribute_drift(contract, key, expected_rows, rows))
+        )
+    findings.extend(_diagnose_attribute_drift(contract, key, expected_rows, rows))
     return findings
 
 
@@ -87,35 +105,47 @@ def diagnose_current_snapshot(
         snapshot[row.natural_key].append(row)
     findings: list[Finding] = []
     for key in sorted(set(actual_open) | set(snapshot)):
-        actual_signature = sorted(
-            canonical_json(
-                {name: row.attrs[name] for name in contract.tracked_attributes}
-            )
-            for row in actual_open.get(key, [])
+        finding = snapshot_drift_for_key(
+            contract, key, actual_open.get(key, []), snapshot.get(key, [])
         )
-        snapshot_signature = sorted(
-            canonical_json(
-                {name: row.attrs[name] for name in contract.tracked_attributes}
-            )
-            for row in snapshot.get(key, [])
-        )
-        if actual_signature != snapshot_signature:
-            findings.append(
-                Finding(
-                    code="DIM_CURRENT_SNAPSHOT_DRIFT",
-                    severity="medium",
-                    phase="diagnose",
-                    natural_key=key,
-                    message=f"current snapshot differs from open actual rows for {key}",
-                    details={
-                        "open_actual_rows": [
-                            row.member_sk for row in actual_open.get(key, [])
-                        ],
-                        "snapshot_rows": [row.row_no for row in snapshot.get(key, [])],
-                    },
-                )
-            )
+        if finding is not None:
+            findings.append(finding)
     return findings
+
+
+def snapshot_drift_for_key(
+    contract: Contract,
+    key: str,
+    open_rows: list[ActualVersion],
+    snapshot_rows: list[CurrentRow],
+) -> Finding | None:
+    """Compare open actual rows of one key with its current snapshot rows."""
+    actual_signature = sorted(
+        canonical_json(
+            {name: row.attrs[name] for name in contract.tracked_attributes}
+        )
+        for row in open_rows
+    )
+    snapshot_signature = sorted(
+        canonical_json(
+            {name: row.attrs[name] for name in contract.tracked_attributes}
+        )
+        for row in snapshot_rows
+    )
+    if actual_signature == snapshot_signature:
+        return None
+    return Finding(
+        code="DIM_CURRENT_SNAPSHOT_DRIFT",
+        severity="medium",
+        phase="diagnose",
+        natural_key=key,
+        message=f"current snapshot differs from open actual rows for {key}",
+        details={
+            "open_actual_rows": [row.member_sk for row in open_rows],
+            "open_actual_row_nos": [row.row_no for row in open_rows],
+            "snapshot_rows": [row.row_no for row in snapshot_rows],
+        },
+    )
 
 
 def _diagnose_attribute_drift(
@@ -129,9 +159,19 @@ def _diagnose_attribute_drift(
         aligned = [row for row in actual_rows if row.valid_from == expected.valid_from]
         if not aligned:
             continue
-        if any(row.attrs == expected.attrs for row in aligned):
+        # Rows with non-positive intervals are untrustworthy evidence: they
+        # must not alibi legitimate rows ("prove" the history correct), only
+        # trustworthy rows can suppress a drift finding.
+        trustworthy = [row for row in aligned if _valid_interval(row)]
+        if any(row.attrs == expected.attrs for row in trustworthy):
             continue
-        actual = aligned[0]
+        mismatched = [row for row in aligned if row.attrs != expected.attrs]
+        if not mismatched:
+            continue
+        actual = next(
+            (row for row in trustworthy if row.attrs != expected.attrs),
+            mismatched[0],
+        )
         differences = {
             name: {
                 "expected": expected.attrs.get(name),
@@ -152,8 +192,14 @@ def _diagnose_attribute_drift(
                 details={
                     "expected_version_seq": expected.version_seq,
                     "member_sks": [row.member_sk for row in aligned],
+                    "row_nos": [row.row_no for row in aligned],
+                    "evidence_row_no": actual.row_no,
                     "differences": differences,
                 },
             )
         )
     return findings
+
+
+def _valid_interval(row: ActualVersion) -> bool:
+    return row.valid_to is None or row.valid_from < row.valid_to
